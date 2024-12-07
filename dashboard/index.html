@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StudyRenacer - Dashboard</title>
+    <link rel="stylesheet" href="../css/styles.css">
+    <link rel="stylesheet" href="../css/dashboard.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>StudyRenacer</h1>
+            </div>
+            <nav class="sidebar-nav">
+                <ul>
+                    <li>
+                        <span class="material-icons">school</span>
+                        <span>Materias</span>
+                    </li>
+                    <li class="active">
+                        <span class="material-icons">people</span>
+                        <span>Usuarios</span>
+                    </li>
+                </ul>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <span class="material-icons">account_circle</span>
+                    <span id="username">Usuario</span>
+                </div>
+                <button id="logoutBtn" class="logout-btn">
+                    <span class="material-icons">logout</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="content-header">
+                <div class="header-title">
+                    <h1>Usuarios</h1>
+                </div>
+            </header>
+
+            <div class="content-body">
+                <!-- Content Sections -->
+                <div id="materiasContent" class="content-section" style="display: none;">
+                    <div class="section-header">
+                        <h2>Materias</h2>
+                    </div>
+                    <div class="materias-list">
+                        <!-- Materias will be added later -->
+                        <p class="empty-message">No hay materias disponibles</p>
+                    </div>
+                </div>
+
+                <div id="usuariosContent" class="content-section">
+                    <div class="section-header">
+                        <h2>Lista de Usuarios</h2>
+                    </div>
+                    <div class="usuarios-list">
+                        <!-- Users will be added dynamically -->
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="../js/config.js"></script>
+    <script src="../js/auth.js"></script>
+    <script src="../js/dashboard.js"></script>
+</body>
+</html> 
