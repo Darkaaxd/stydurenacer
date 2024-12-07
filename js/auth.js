@@ -1,202 +1,325 @@
 class Auth {
     constructor() {
-        this.users = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEYS.USERS)) || [];
-        this.initializeAdminUsers();
-        this.initializeStudentUsers();
+        this.users = this.loadUsers();
+        this.userIPs = this.loadUserIPs();
+        this.checkSubscriptionStatus = this.checkSubscriptionStatus.bind(this);
+        
+        // Verificar estado de suscripción si está autenticado
+        if (this.isAuthenticated()) {
+            this.startSubscriptionCheck();
+        }
     }
 
-    // Inicializar usuarios administradores
-    initializeAdminUsers() {
-        const adminUsernames = Object.keys(CONFIG.ADMIN_USERS);
+    loadUsers() {
+        const storedUsers = localStorage.getItem(CONFIG.STORAGE_KEYS.USERS);
+        let users = storedUsers ? JSON.parse(storedUsers) : {};
         
-        // Verificar si ya existen los admins
-        const existingAdmins = this.users.filter(user => 
-            adminUsernames.includes(user.username)
-        );
-
-        if (existingAdmins.length === adminUsernames.length) {
-            return; // Todos los admins ya están creados
-        }
-
-        // Crear usuarios admin que no existan
-        adminUsernames.forEach(username => {
-            if (!this.users.some(user => user.username === username)) {
-                const adminUser = {
-                    id: 'admin_' + Date.now() + Math.random().toString(36).substr(2),
-                    username: username,
-                    password: this.hashPassword(CONFIG.ADMIN_USERS[username]),
-                    role: 'admin',
-                    isActive: true,
-                    createdAt: new Date().toISOString()
+        // Agregar usuarios predefinidos si no existen
+        Object.entries(CONFIG.ADMIN_USERS).forEach(([username, password]) => {
+            if (!users[username]) {
+                users[username] = {
+                    username,
+                    password,
+                    role: 'admin'
                 };
-                this.users.push(adminUser);
             }
         });
 
-        this.saveUsers();
-    }
-
-    // Inicializar usuarios estudiantes predefinidos
-    initializeStudentUsers() {
-        const studentUsernames = Object.keys(CONFIG.STUDENT_USERS);
-        
-        // Verificar si ya existen los estudiantes
-        const existingStudents = this.users.filter(user => 
-            studentUsernames.includes(user.username)
-        );
-
-        if (existingStudents.length === studentUsernames.length) {
-            return; // Todos los estudiantes ya están creados
-        }
-
-        // Crear usuarios estudiantes que no existan
-        studentUsernames.forEach(username => {
-            if (!this.users.some(user => user.username === username)) {
-                const studentUser = {
-                    id: 'student_' + Date.now() + Math.random().toString(36).substr(2),
-                    username: username,
-                    password: this.hashPassword(CONFIG.STUDENT_USERS[username]),
+        Object.entries(CONFIG.STUDENT_USERS).forEach(([username, userData]) => {
+            if (!users[username]) {
+                users[username] = {
+                    username,
+                    password: userData.password,
                     role: 'student',
-                    isActive: true,
-                    createdAt: new Date().toISOString()
+                    expirationDate: userData.expirationDate
                 };
-                this.users.push(studentUser);
             }
         });
 
-        this.saveUsers();
+        this.saveUsers(users);
+        return users;
     }
 
-    // Guardar usuarios en localStorage
-    saveUsers() {
-        localStorage.setItem(CONFIG.STORAGE_KEYS.USERS, JSON.stringify(this.users));
+    loadUserIPs() {
+        const storedIPs = localStorage.getItem(CONFIG.STORAGE_KEYS.USER_IPS);
+        return storedIPs ? JSON.parse(storedIPs) : {};
     }
 
-    // Registrar usuario
-    register(username, password) {
-        return new Promise((resolve, reject) => {
-            // Validaciones
-            if (username.length < 3) {
-                reject(new Error(CONFIG.ERROR_MESSAGES.INVALID_USERNAME));
-                return;
-            }
-
-            if (password.length < 6) {
-                reject(new Error(CONFIG.ERROR_MESSAGES.INVALID_PASSWORD));
-                return;
-            }
-
-            // Verificar si el usuario ya existe
-            if (this.users.some(user => user.username === username)) {
-                reject(new Error(CONFIG.ERROR_MESSAGES.USER_EXISTS));
-                return;
-            }
-
-            // Crear nuevo usuario
-            const newUser = {
-                id: Date.now().toString(),
-                username,
-                password: this.hashPassword(password),
-                role: 'student',
-                isActive: true,
-                createdAt: new Date().toISOString()
-            };
-
-            // Agregar usuario y guardar
-            this.users.push(newUser);
-            this.saveUsers();
-
-            // Crear token y datos de sesión
-            const token = this.generateToken(newUser);
-            const userData = this.getUserData(newUser);
-
-            // Guardar sesión
-            this.saveSession(token, userData);
-
-            resolve(userData);
-        });
+    saveUsers(users) {
+        localStorage.setItem(CONFIG.STORAGE_KEYS.USERS, JSON.stringify(users));
+        this.users = users;
     }
 
-    // Login de usuario
-    login(username, password) {
-        return new Promise((resolve, reject) => {
-            // Buscar usuario
-            const user = this.users.find(u => u.username === username);
-
-            if (!user) {
-                reject(new Error(CONFIG.ERROR_MESSAGES.USER_NOT_FOUND));
-                return;
-            }
-
-            if (!this.verifyPassword(password, user.password)) {
-                reject(new Error(CONFIG.ERROR_MESSAGES.INVALID_CREDENTIALS));
-                return;
-            }
-
-            if (!user.isActive) {
-                reject(new Error('Usuario desactivado'));
-                return;
-            }
-
-            // Crear token y datos de sesión
-            const token = this.generateToken(user);
-            const userData = this.getUserData(user);
-
-            // Guardar sesión
-            this.saveSession(token, userData);
-
-            resolve(userData);
-        });
+    saveUserIPs(userIPs) {
+        localStorage.setItem(CONFIG.STORAGE_KEYS.USER_IPS, JSON.stringify(userIPs));
+        this.userIPs = userIPs;
     }
 
-    // Cerrar sesión
+    async getCurrentIP() {
+        try {
+            const response = await fetch('https://api.ipify.org?format=json');
+            const data = await response.json();
+            return data.ip;
+        } catch (error) {
+            console.error('Error obteniendo IP:', error);
+            return null;
+        }
+    }
+
+    startSubscriptionCheck() {
+        // Iniciar verificación periódica
+        this.subscriptionCheckInterval = setInterval(() => {
+            this.checkSubscriptionStatus();
+        }, CONFIG.SECURITY.CHECK_INTERVAL);
+        
+        // Verificar inmediatamente
+        this.checkSubscriptionStatus();
+    }
+
+    stopSubscriptionCheck() {
+        if (this.subscriptionCheckInterval) {
+            clearInterval(this.subscriptionCheckInterval);
+        }
+    }
+
+    checkSubscriptionStatus() {
+        const currentUser = this.getCurrentUser();
+        if (!currentUser || currentUser.role === 'admin') return;
+
+        const user = this.users[currentUser.username];
+        if (!user || !user.expirationDate) return;
+
+        const expirationDate = new Date(user.expirationDate);
+        const now = new Date();
+
+        if (now > expirationDate) {
+            this.showSubscriptionExpiredModal();
+            this.stopSubscriptionCheck(); // Detener verificación una vez que expire
+        }
+    }
+
+    showSubscriptionExpiredModal() {
+        const userData = localStorage.getItem(CONFIG.STORAGE_KEYS.USER_DATA);
+        console.log('Datos de usuario en modal:', userData);
+        const currentUser = userData ? JSON.parse(userData) : null;
+        console.log('Usuario actual en modal:', currentUser);
+
+        // Asegurarnos de tener el nombre de usuario
+        const username = currentUser ? currentUser.username : 'Usuario';
+        console.log('Nombre de usuario para el mensaje:', username);
+
+        // Crear el mensaje de WhatsApp
+        const whatsappMessage = `Hola! Soy el usuario: ${username} y quiero renovar mi suscripción`;
+        console.log('Mensaje a enviar:', whatsappMessage);
+
+        // Crear modal si no existe
+        let modal = document.getElementById('subscriptionExpiredModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'subscriptionExpiredModal';
+            modal.className = 'modal';
+            modal.innerHTML = `
+                <div class="modal-content">
+                    <h2>Tiempo de Sesión Terminado</h2>
+                    <p>Tu tiempo de sesión ha terminado. ¿Deseas renovar tu suscripción?</p>
+                    <div class="modal-buttons">
+                        <button id="payButton" class="primary-button">Pagar</button>
+                        <button id="logoutButton" class="secondary-button">Aceptar</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+
+            // Agregar event listeners
+            document.getElementById('payButton').addEventListener('click', () => {
+                // Abrir WhatsApp
+                window.open('https://wa.me/+573183159634?text=' + encodeURIComponent(whatsappMessage), '_blank');
+                
+                // Enviar correo
+                emailjs.send('service_jzt3rzr', 'template_sokkuqf', {
+                    from_name: username,
+                    message: 'Un estudiante ha solicitado renovar su suscripción. Por favor, revisa tu WhatsApp para más detalles.',
+                    system_date: new Date().toLocaleString()
+                });
+
+                // Redirigir al login
+                window.location.href = './index.html';
+            });
+
+            document.getElementById('logoutButton').addEventListener('click', () => {
+                window.location.href = './index.html';
+            });
+
+            // Agregar estilos si no existen
+            if (!document.getElementById('subscriptionModalStyles')) {
+                const styles = document.createElement('style');
+                styles.id = 'subscriptionModalStyles';
+                styles.textContent = `
+                    .modal {
+                        display: block;
+                        position: fixed;
+                        z-index: 1000;
+                        left: 0;
+                        top: 0;
+                        width: 100%;
+                        height: 100%;
+                        background-color: rgba(0,0,0,0.5);
+                    }
+                    .modal-content {
+                        background-color: white;
+                        margin: 15% auto;
+                        padding: 20px;
+                        border-radius: 8px;
+                        width: 80%;
+                        max-width: 500px;
+                        text-align: center;
+                    }
+                    .modal-buttons {
+                        margin-top: 20px;
+                    }
+                    .modal-buttons button {
+                        margin: 0 10px;
+                        padding: 10px 20px;
+                        border-radius: 4px;
+                        cursor: pointer;
+                    }
+                    .primary-button {
+                        background-color: var(--primary-color);
+                        color: white;
+                        border: none;
+                    }
+                    .secondary-button {
+                        background-color: #ddd;
+                        border: none;
+                    }
+                `;
+                document.head.appendChild(styles);
+            }
+        }
+
+        modal.style.display = 'block';
+    }
+
+    async requestPayment() {
+        const currentUser = this.getCurrentUser();
+        if (!currentUser) return;
+
+        const message = encodeURIComponent(`${CONFIG.CONTACT.PAYMENT_MESSAGE}${currentUser.username}`);
+        const whatsappURL = `https://wa.me/${CONFIG.CONTACT.WHATSAPP}?text=${message}`;
+        
+        // Abrir WhatsApp en una nueva pestaña
+        window.open(whatsappURL, '_blank');
+        
+        // Mostrar mensaje de confirmación
+        alert(CONFIG.SUCCESS_MESSAGES.PAYMENT_REQUEST_SENT);
+        
+        // Cerrar sesión después de enviar la solicitud
+        this.logout();
+    }
+
+    async login(username, password) {
+        const user = this.users[username];
+
+        if (!user || user.password !== password) {
+            throw new Error(CONFIG.ERROR_MESSAGES.INVALID_CREDENTIALS);
+        }
+
+        // Guardar datos de sesión primero
+        const userData = {
+            username: username,
+            role: user.role,
+            expirationDate: user.expirationDate
+        };
+
+        localStorage.setItem(CONFIG.STORAGE_KEYS.USER_DATA, JSON.stringify(userData));
+        console.log('Usuario guardado:', userData);
+
+        // Verificar suscripción para estudiantes
+        if (user.role === 'student' && user.expirationDate) {
+            const expirationDate = new Date(user.expirationDate);
+            const now = new Date();
+
+            if (now > expirationDate) {
+                this.showSubscriptionExpiredModal();
+                throw new Error(CONFIG.ERROR_MESSAGES.SUBSCRIPTION_EXPIRED);
+            }
+        }
+
+        // Verificar IP solo si está habilitado y no es admin
+        if (CONFIG.SECURITY.ENABLE_IP_LOCK && 
+            (!CONFIG.SECURITY.ADMIN_BYPASS_IP || user.role !== 'admin')) {
+            
+            const currentIP = await this.getCurrentIP();
+            
+            if (!currentIP) {
+                throw new Error('No se pudo verificar la dirección IP');
+            }
+
+            if (this.userIPs[username] && this.userIPs[username] !== currentIP) {
+                throw new Error(CONFIG.ERROR_MESSAGES.INVALID_IP);
+            }
+
+            if (!this.userIPs[username]) {
+                this.userIPs[username] = currentIP;
+                this.saveUserIPs(this.userIPs);
+            }
+        }
+
+        return userData;
+    }
+
     logout() {
-        localStorage.removeItem(CONFIG.STORAGE_KEYS.AUTH_TOKEN);
+        this.stopSubscriptionCheck();
         localStorage.removeItem(CONFIG.STORAGE_KEYS.USER_DATA);
+        window.location.href = this.getBasePath();
     }
 
-    // Verificar si el usuario está autenticado
-    isAuthenticated() {
-        return !!localStorage.getItem(CONFIG.STORAGE_KEYS.AUTH_TOKEN);
-    }
-
-    // Obtener usuario actual
     getCurrentUser() {
         const userData = localStorage.getItem(CONFIG.STORAGE_KEYS.USER_DATA);
+        console.log('Datos de usuario recuperados:', userData); // Debug log
         return userData ? JSON.parse(userData) : null;
     }
 
-    // Funciones auxiliares
-    hashPassword(password) {
-        // En una aplicación real, usaríamos una función de hash real
-        return btoa(password);
+    isAuthenticated() {
+        return !!this.getCurrentUser();
     }
 
-    verifyPassword(password, hashedPassword) {
-        return this.hashPassword(password) === hashedPassword;
-    }
+    // Método para que los admins agreguen o actualicen usuarios con fecha real
+    addOrUpdateStudent(username, password, expirationDate) {
+        const currentUser = this.getCurrentUser();
+        if (!currentUser || currentUser.role !== 'admin') {
+            throw new Error('No autorizado');
+        }
 
-    generateToken(user) {
-        // En una aplicación real, generaríamos un JWT real
-        return btoa(JSON.stringify({
-            id: user.id,
-            username: user.username,
-            role: user.role,
-            exp: Date.now() + (24 * 60 * 60 * 1000) // 24 horas
-        }));
-    }
+        // Validar que la fecha de expiración sea válida
+        const expDate = new Date(expirationDate);
+        if (isNaN(expDate.getTime())) {
+            throw new Error('Fecha de expiración inválida');
+        }
 
-    getUserData(user) {
-        return {
-            id: user.id,
-            username: user.username,
-            role: user.role
+        this.users[username] = {
+            username,
+            password,
+            role: 'student',
+            expirationDate: expirationDate
         };
+
+        this.saveUsers(this.users);
     }
 
-    saveSession(token, userData) {
-        localStorage.setItem(CONFIG.STORAGE_KEYS.AUTH_TOKEN, token);
-        localStorage.setItem(CONFIG.STORAGE_KEYS.USER_DATA, JSON.stringify(userData));
+    // Método para verificar si un usuario está expirado
+    isUserExpired(username) {
+        const user = this.users[username];
+        if (!user || user.role === 'admin' || !user.expirationDate) return false;
+
+        const expirationDate = new Date(user.expirationDate);
+        return new Date() > expirationDate;
+    }
+
+    getBasePath() {
+        // Obtener la ruta base del proyecto
+        const path = window.location.pathname;
+        return path.substring(0, path.lastIndexOf('/')) + '/index.html';
     }
 }
 
